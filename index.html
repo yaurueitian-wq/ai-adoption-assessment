@@ -422,9 +422,25 @@ function classifyProfile(dimScores){
   const ids = DIMENSIONS.map(d=>d.id);
   const scores = ids.map(id=>dimScores[id]);
   const mean = scores.reduce((a,b)=>a+b,0)/scores.length;
-  const spread = Math.max(...scores) - Math.min(...scores);
-  const sorted = ids.slice().sort((a,b)=>dimScores[a]-dimScores[b]);
-  const lowest = sorted[0], secondLowest = sorted[1], highest = sorted[sorted.length-1];
+  const maxScore = Math.max(...scores), minScore = Math.min(...scores);
+  const spread = maxScore - minScore;
+  const EPS = 0.001;
+
+  // 短板集合／領先集合：可能不只一個構面同分，不可預設唯一
+  const lowestIds = ids.filter(id => Math.abs(dimScores[id] - minScore) < EPS);
+  const highestIds = ids.filter(id => Math.abs(dimScores[id] - maxScore) < EPS);
+  const lowest = lowestIds[0];
+  const highest = highestIds[0];
+  const sortedRest = ids.filter(id => !lowestIds.includes(id)).sort((a,b)=>dimScores[a]-dimScores[b]);
+  const secondLowest = sortedRest[0] || lowest;
+
+  function namesOf(list){
+    if(list.length === ids.length) return "全部構面";
+    return list.map(id => `「${nameOf(id)}」`).join('、');
+  }
+  const lowestPhrase = namesOf(lowestIds);
+  const lowestIsPlural = lowestIds.length > 1;
+  const lowestIsAll = lowestIds.length === ids.length;
 
   let maxOpId = OPERATIONAL_DIMS[0];
   OPERATIONAL_DIMS.forEach(id => { if(dimScores[id] > dimScores[maxOpId]) maxOpId = id; });
@@ -432,20 +448,20 @@ function classifyProfile(dimScores){
   RISK_CONTROL_DIMS.forEach(id => { if(dimScores[id] < dimScores[minRcId]) minRcId = id; });
   const opGap = dimScores[maxOpId] - dimScores[minRcId];
 
-  // 1. 整體都低：還沒真正站穩腳步
-  if(mean < 1.2){
+  // 0. 全構面同分且已達滿分：極少見的極端一致作答，不可武斷指名短板
+  if(lowestIsAll && minScore >= 3.999){
     return {
-      archetype: "起步觀望型",
-      narrative: `五個構面的分數普遍偏低（平均 ${mean.toFixed(1)} 分），代表AI目前還沒有真正在組織內站穩腳步。這通常不是能力或意願的問題，而是還沒有一個具體的起點讓大家看到成效。`,
+      archetype: "極端一致作答，建議確認",
+      narrative: `五個構面全部都是4.0分——這是較少見的結果，通常代表組織已經是完全成熟的AI-native型態。在採信這個結果之前，建議先確認：這是依「目前實際的做法」填答，還是不小心依「理想中希望達到的目標」填答？兩者很容易混淆，但會導出完全不同的下一步。`,
       actions: [
-        `從單一低風險、重複性高的工作流程開始試點，先建立一個看得到成效的案例，而不是同時想解決所有構面。`,
-        `在啟動任何規模化嘗試前，先建立最基本的資料使用規範與預算上限——這是投入成本最低、卻能防止最大風險的第一步。`,
-        `指定一位技術背景的人參與AI工具的核准與導入決策，優先加速「${nameOf(lowest)}」這個目前最落後的構面。`
+        `如果是依實際現況作答：接下來的重點不是「補強」，而是「維持」——建立定期回顧機制，確保現有的高水準不會隨人員異動或業務變化而流失。`,
+        `把目前運作良好的做法全面文件化，尤其是「${nameOf(highest)}」，確保知識不依賴特定個人。`,
+        `如果填答時有任何一題其實是「參考理想狀態」而非「現在真的是這樣」，建議回去重新檢視那幾題，讓結果更貼近實況。`
       ]
     };
   }
 
-  // 2. 操作性構面明顯超前風控性構面：衝太快
+  // 1. 操作性構面明顯超前風控性構面：衝太快（覆蓋式風險提示，優先權高於單純的低分判定）
   if(opGap >= GAP_THRESHOLD){
     return {
       archetype: "衝刺冒進型",
@@ -458,9 +474,22 @@ function classifyProfile(dimScores){
     };
   }
 
-  // 3. 只有存取單獨落後，其他構面都相對成熟：制度已備妥，但開放範圍很窄
+  // 2. 整體都低：還沒真正站穩腳步
+  if(mean < 1.2){
+    return {
+      archetype: "起步觀望型",
+      narrative: `五個構面的分數普遍偏低（平均 ${mean.toFixed(1)} 分），代表AI目前還沒有真正在組織內站穩腳步。這通常不是能力或意願的問題，而是還沒有一個具體的起點讓大家看到成效。`,
+      actions: [
+        `從單一低風險、重複性高的工作流程開始試點，先建立一個看得到成效的案例，而不是同時想解決所有構面。`,
+        `在啟動任何規模化嘗試前，先建立最基本的資料使用規範與預算上限——這是投入成本最低、卻能防止最大風險的第一步。`,
+        `優先加速${lowestPhrase}——${lowestIsPlural ? '這幾個構面同為目前最落後的部分' : '這是目前最落後的構面'}，可指定一位技術背景的人參與相關決策。`
+      ]
+    };
+  }
+
+  // 3. 只有存取單獨落後（無平手），其他構面都相對成熟：制度已備妥，但開放範圍很窄
   const othersMean = ids.filter(id=>id!=="access").reduce((a,id)=>a+dimScores[id],0) / 4;
-  if(lowest === "access" && othersMean - dimScores.access >= 1.0 && othersMean >= 2.5){
+  if(lowestIds.length === 1 && lowest === "access" && othersMean - dimScores.access >= 1.0 && othersMean >= 2.5){
     return {
       archetype: "少數特許型",
       narrative: `「治理／信任／審查」這些制度性的構面都已經相對成熟（平均約 ${othersMean.toFixed(1)} 分），但「存取」明顯是唯一落後的一塊——這代表組織不是不會用AI，而是把使用範圍刻意或被迫收得很窄。這通常來自三種不太一樣的原因，可以自行判斷哪個最接近實況：可能是目前只有少數具備高層信任或特定職位的人被允許使用（菁英特許）；也可能是IT基礎建設還撐不起更大範圍的部署（基礎建設缺口）；或者是預算/token額度有限，只能先給部分角色（成本限制）。`,
@@ -476,40 +505,44 @@ function classifyProfile(dimScores){
   if(spread <= 1.0 && mean >= 3){
     return {
       archetype: "均衡成熟型",
-      narrative: `五個構面發展得相當均衡，且整體水準已經不低（平均 ${mean.toFixed(1)} 分）——你們不是卡在單一明顯短板，而是整體正穩定地往下一階段推進。`,
+      narrative: `五個構面發展得相當均衡，且整體水準已經不低（平均 ${mean.toFixed(1)} 分）——你們${lowestIsPlural ? '不是卡在單一短板，而是有幾個構面同為目前的共同晉級門檻' : '不是卡在多個短板，而是整體正穩定地往下一階段推進'}。`,
       actions: [
-        `優先補強「${nameOf(lowest)}」，這是目前唯一還沒完全跟上其他構面的部分，補齊後有機會讓整體評級直接跳一階（記得整體評級是取最低分）。`,
-        `把目前運作良好的做法（尤其是「${nameOf(highest)}」）文件化，確保不依賴特定個人也能持續運作、順利傳承。`,
+        lowestIsPlural
+          ? `${lowestPhrase}目前同為最低分，是共同的晉級門檻，建議同步補強，而非只挑一個處理。`
+          : `優先補強${lowestPhrase}，這是目前唯一還沒完全跟上其他構面的部分，補齊後有機會讓整體評級直接跳一階（記得整體評級是取最低分）。`,
+        `把目前運作良好的做法（尤其是${namesOf(highestIds)}）文件化，確保不依賴特定個人也能持續運作、順利傳承。`,
         `可以考慮啟動下一階段的規模化試點，但務必維持現有治理／信任的把關強度同步擴大，避免出現落差警示中提到的風險型態。`
       ]
     };
   }
 
-  // 4. 落差小、整體偏中低：同步起步，但沒有示範案例
+  // 5. 落差小、整體偏中低：同步起步，但沒有示範案例
   if(spread <= 1.0){
     return {
       archetype: "同步起步型",
       narrative: `五個構面的發展速度相當一致，沒有明顯落後的單一構面——但這也代表目前還沒有哪個地方特別突出，能成為組織內部的示範案例，帶動其他人跟進。`,
       actions: [
-        `與其平均分攤心力在5個構面，建議刻意挑一個構面（例如「${nameOf(highest)}」）優先推進到下一階段，做出一個看得見的成功案例。`,
+        `與其平均分攤心力在5個構面，建議刻意挑一個構面（例如${namesOf(highestIds)}）優先推進到下一階段，做出一個看得見的成功案例。`,
         `把這個示範案例的具體做法整理成可複製的內部指引，再推廣到其他構面，而不是同時鋪開所有戰線。`,
         `觀察其中一個構面推進後，是否會自然帶動其他構面（例如並行能力提升後，審查方式往往也要跟著升級）。`
       ]
     };
   }
 
-  // 5. 預設：有明顯落後但不屬於上述特定型態
-  const stage1 = Math.min(Math.floor(dimScores[lowest]), 3);
-  const stage2 = Math.min(Math.floor(dimScores[secondLowest]), 3);
-  const action1 = DIAGNOSIS[lowest].byStage[stage1][0].action;
-  const action2 = DIAGNOSIS[secondLowest].byStage[stage2][0].action;
+  // 6. 預設：有明顯落後但不屬於上述特定型態——依短板集合列出，而非假設唯一
+  const focusIds = lowestIds.length >= 2 ? lowestIds.slice(0,2) : [lowest, secondLowest];
+  const focusActions = focusIds.map(id => {
+    const stage = Math.min(Math.floor(dimScores[id]), 3);
+    return `針對${namesOf([id])}：${DIAGNOSIS[id].byStage[stage][0].action}`;
+  });
   return {
     archetype: "局部落後型",
-    narrative: `五個構面中，「${nameOf(lowest)}」與「${nameOf(secondLowest)}」明顯落後其他構面，這通常代表組織的投入或關注力還沒有平均分配到這兩塊，而不是能力上做不到。`,
+    narrative: lowestIds.length >= 2
+      ? `五個構面中，${namesOf(focusIds)}${lowestIds.length > 2 ? '等' : ''}並列最低分，屬於共同短板，這通常代表組織的投入或關注力還沒有平均分配到這幾塊，而不是能力上做不到。`
+      : `五個構面中，${nameOf(lowest)}與${nameOf(secondLowest)}明顯落後其他構面，這通常代表組織的投入或關注力還沒有平均分配到這兩塊，而不是能力上做不到。`,
     actions: [
-      `針對「${nameOf(lowest)}」：${action1}`,
-      `針對「${nameOf(secondLowest)}」：${action2}`,
-      `建議定期重新填寫這份盤點，觀察這兩個構面補強後，整體評級與構面落差是否隨之改善。`
+      ...focusActions,
+      `建議定期重新填寫這份盤點，觀察${lowestIds.length>=2?'這些':'這兩個'}構面補強後，整體評級與構面落差是否隨之改善。`
     ]
   };
 }
