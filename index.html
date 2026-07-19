@@ -7,6 +7,19 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<!--
+  MaiAgent 整合（選用，非機密）
+  MaiAgent的/completions/端點需要機密Api-Key，不能直接寫在這個公開前端裡，
+  所以改為呼叫自己架的Cloudflare Worker代理（見 worker/ 資料夾），金鑰只存在Worker端的環境變數。
+  workerUrl 留空時，系統會自動使用內建的規則式邏輯（classifyProfile），不影響正常運作。
+  詳見同資料夾 MaiAgent_Prompt草稿.md 與 worker/README.md。
+-->
+<script>
+  window.MAIAGENT_CONFIG = {
+    workerUrl: 'https://maiagent-proxy.yau-ruei-tian.workers.dev'
+  };
+</script>
 <style>
   :root{
     --primary: #3B82F6;
@@ -719,7 +732,7 @@ function renderResults(){
 
     <div class="card p-6 sm:p-8 mb-6 bg-orange-50 border-orange-200">
       <h3 class="mono text-xs font-bold text-orange-600 uppercase tracking-widest mb-4">下一步：優先行動建議</h3>
-      ${renderNextSteps(dimScores)}
+      <div id="next-steps-content">${renderNextSteps(dimScores)}</div>
     </div>
 
     ${renderGapWarning(dimScores)}
@@ -771,6 +784,63 @@ function renderResults(){
       <button class="text-slate-500 hover:text-slate-800 text-sm font-medium cursor-pointer transition-colors" onclick="restart()">↺ 重新填寫</button>
     </div>
   `;
+
+  tryUpgradeNextStepsWithMaiAgent(dimScores, overall, stage);
+}
+
+/* ============ MAIAGENT (選用) ============
+   規則式 renderNextSteps() 一律先同步顯示，不會因為Worker沒設定/沒回應而讓頁面空白。
+   若 workerUrl 已設定，會把10題具體答案POST給自架的Cloudflare Worker代理（見 worker/ 資料夾），
+   由Worker帶著機密金鑰去呼叫MaiAgent的/completions/端點；拿到回覆後才「升級」取代規則式內容，
+   逾時（8秒）或任何失敗都靜默保留原本內容，不影響使用。 */
+function buildMaiAgentMessage(dimScores, overall, stage){
+  const sections = DIMENSIONS.map(d => {
+    const lines = d.questions.map((q,i) => {
+      const lvl = answers[`${d.id}-${i}`];
+      const optionText = q.options[lvl].split('||')[0];
+      return `Q${i+1} ${q.title}：${optionText}`;
+    }).join('\n');
+    return `【${d.name}】\n${lines}`;
+  }).join('\n\n');
+
+  const scoreLine = DIMENSIONS.map(d => `${d.name}${dimScores[d.id].toFixed(1)}`).join('／');
+
+  return `請根據以下作答，產出綜合診斷：\n\n${sections}\n\n五構面平均分數：${scoreLine}\n整體評級：${overall.toFixed(1)}（對應階段：${stage.zh}／${stage.name}）`;
+}
+
+async function tryUpgradeNextStepsWithMaiAgent(dimScores, overall, stage){
+  const workerUrl = window.MAIAGENT_CONFIG && window.MAIAGENT_CONFIG.workerUrl;
+  if(!workerUrl) return; // 未設定，維持規則式結果
+
+  const target = document.getElementById('next-steps-content');
+  if(!target) return;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000); // 8秒逾時保護
+
+  try{
+    const res = await fetch(workerUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: buildMaiAgentMessage(dimScores, overall, stage) }),
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    if(!res.ok) return; // Worker或上游失敗，靜默保留規則式內容
+
+    const data = await res.json();
+    // MaiAgent回覆的實際欄位名稱需以Worker實測結果為準，這裡涵蓋常見可能性
+    const text = data && (data.content || data.message?.content || data.reply || '');
+    if(!text || typeof text !== 'string') return;
+
+    target.innerHTML = `
+      <div class="mono text-[10px] font-bold text-white bg-blue-600 px-2.5 py-1 rounded-full uppercase tracking-wider inline-block mb-3">AI即時分析 · MaiAgent</div>
+      <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-line">${text}</p>
+    `;
+  }catch(e){
+    clearTimeout(timeout);
+    // fetch失敗/逾時/JSON解析失敗，直接保留規則式內容
+  }
 }
 
 const OPERATIONAL_DIMS = ["access", "parallel", "review"];

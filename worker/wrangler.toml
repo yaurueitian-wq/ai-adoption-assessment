@@ -1,0 +1,10 @@
+name = "maiagent-proxy"
+main = "maiagent-proxy.js"
+compatibility_date = "2026-07-19"
+
+[vars]
+ALLOWED_ORIGIN = "https://yaurueitian-wq.github.io"
+
+# 機密值不要寫在這裡，用以下指令設定（見同資料夾 README.md）：
+#   wrangler secret put MAIAGENT_API_KEY
+#   wrangler secret put MAIAGENT_CHATBOT_ID
