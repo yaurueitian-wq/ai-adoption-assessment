@@ -814,19 +814,33 @@ function renderStageTable(stageFloor){
   const rows = STAGE_NAMES.map((s, i) => {
     const isCurrent = i === stageFloor;
     return `
-      <div class="grid grid-cols-[28px_1fr_auto] sm:grid-cols-[32px_140px_1fr_90px] items-center gap-2 sm:gap-4 px-3 sm:px-4 py-3 rounded-lg ${isCurrent ? 'bg-blue-50 ring-1 ring-blue-400' : ''}">
-        <div class="mono text-xs font-bold ${isCurrent?'text-blue-600':'text-slate-300'}">${i}</div>
-        <div class="${isCurrent?'text-blue-700 font-bold':'text-slate-600 font-medium'} text-sm">
-          ${s.zh}
-          <span class="hidden sm:inline mono text-xs text-slate-400 font-normal">· ${s.name}</span>
-        </div>
-        <div class="text-xs text-slate-500 leading-relaxed hidden sm:block">${s.role}</div>
-        <div class="mono text-xs text-right ${isCurrent?'text-blue-600 font-bold':'text-slate-400'}">${s.agents}</div>
-      </div>
-      ${isCurrent ? `<div class="pl-3 sm:pl-11 pr-3 sm:pr-4 pb-2 -mt-1"><span class="mono text-[10px] font-bold text-white bg-blue-600 px-2 py-0.5 rounded-full">◄ 你在這裡</span></div>` : ''}
-    `;
+      <tr class="${isCurrent ? 'bg-blue-50' : i % 2 === 1 ? 'bg-slate-50/60' : ''}">
+        <td class="border border-slate-200 px-3 py-3 text-center mono text-xs font-bold ${isCurrent?'text-blue-600':'text-slate-400'} relative">
+          ${isCurrent ? '<span class="absolute left-0 top-0 bottom-0 w-1 bg-blue-600"></span>' : ''}${i}
+        </td>
+        <td class="border border-slate-200 px-3 py-3 text-sm whitespace-nowrap">
+          <span class="${isCurrent?'text-blue-700 font-bold':'text-slate-700 font-medium'}">${s.zh}</span>
+          <span class="mono text-xs text-slate-400 font-normal"> · ${s.name}</span>
+          ${isCurrent ? `<span class="mono text-[10px] font-bold text-white bg-blue-600 px-2 py-0.5 rounded-full ml-2 whitespace-nowrap">◄ 你在這裡</span>` : ''}
+        </td>
+        <td class="border border-slate-200 px-3 py-3 text-xs text-slate-500 leading-relaxed">${s.role}</td>
+        <td class="border border-slate-200 px-3 py-3 text-center mono text-xs ${isCurrent?'text-blue-600 font-bold':'text-slate-500'}">${s.agents}</td>
+      </tr>`;
   }).join('');
-  return `<div class="flex flex-col gap-1">${rows}</div>`;
+  return `
+    <div class="overflow-x-auto -mx-1">
+      <table class="w-full border-collapse min-w-[520px]">
+        <thead>
+          <tr class="bg-blue-600 text-white">
+            <th class="border border-blue-600 px-3 py-2.5 mono text-[11px] font-bold uppercase tracking-wider">階段</th>
+            <th class="border border-blue-600 px-3 py-2.5 text-left mono text-[11px] font-bold uppercase tracking-wider">名稱</th>
+            <th class="border border-blue-600 px-3 py-2.5 text-left mono text-[11px] font-bold uppercase tracking-wider">角色</th>
+            <th class="border border-blue-600 px-3 py-2.5 mono text-[11px] font-bold uppercase tracking-wider">Agents</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 function renderGauge(value, color){
