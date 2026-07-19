@@ -815,8 +815,16 @@ async function tryUpgradeNextStepsWithMaiAgent(dimScores, overall, stage){
   const target = document.getElementById('next-steps-content');
   if(!target) return;
 
+  // 顯示分析中提示（不移除規則式內容，只是在上方插入一個提示條）
+  const loadingId = 'maiagent-loading-badge';
+  const loadingBadge = document.createElement('div');
+  loadingBadge.id = loadingId;
+  loadingBadge.className = 'mono text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-full inline-flex items-center gap-1.5 mb-3';
+  loadingBadge.innerHTML = `<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span> AI正在分析中，稍候可能會更新為更完整的診斷…`;
+  target.prepend(loadingBadge);
+
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000); // 8秒逾時保護
+  const timeout = setTimeout(() => controller.abort(), 25000); // 25秒逾時保護（實測完整訊息約需10秒）
 
   try{
     const res = await fetch(workerUrl, {
@@ -826,12 +834,12 @@ async function tryUpgradeNextStepsWithMaiAgent(dimScores, overall, stage){
       signal: controller.signal
     });
     clearTimeout(timeout);
-    if(!res.ok) return; // Worker或上游失敗，靜默保留規則式內容
+    if(!res.ok){ loadingBadge.remove(); return; } // Worker或上游失敗，靜默保留規則式內容
 
     const data = await res.json();
     // MaiAgent回覆的實際欄位名稱需以Worker實測結果為準，這裡涵蓋常見可能性
     const text = data && (data.content || data.message?.content || data.reply || '');
-    if(!text || typeof text !== 'string') return;
+    if(!text || typeof text !== 'string'){ loadingBadge.remove(); return; }
 
     target.innerHTML = `
       <div class="mono text-[10px] font-bold text-white bg-blue-600 px-2.5 py-1 rounded-full uppercase tracking-wider inline-block mb-3">AI即時分析 · MaiAgent</div>
@@ -839,6 +847,8 @@ async function tryUpgradeNextStepsWithMaiAgent(dimScores, overall, stage){
     `;
   }catch(e){
     clearTimeout(timeout);
+    const badge = document.getElementById(loadingId);
+    if(badge) badge.remove();
     // fetch失敗/逾時/JSON解析失敗，直接保留規則式內容
   }
 }
