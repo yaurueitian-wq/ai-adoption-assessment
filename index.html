@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI導入盤點系統</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --primary: #3B82F6;
+    --secondary: #60A5FA;
+    --cta: #F97316;
+    --bg: #F8FAFC;
+    --text: #1E293B;
+  }
+  *{ font-family: 'Fira Sans', system-ui, sans-serif; }
+  .mono{ font-family: 'Fira Code', monospace; }
+  body{ background: var(--bg); color: var(--text); }
+  ::selection{ background: var(--primary); color: white; }
+
+  .opt{ transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease; }
+  .opt:hover{ border-color: var(--primary); background: #EFF6FF; }
+  .opt.selected{ border-color: var(--primary); background: #EFF6FF; box-shadow: 0 0 0 1px var(--primary); }
+  .opt-level{ transition: background 150ms ease, color 150ms ease; }
+  .opt.selected .opt-level{ background: var(--primary); color: white; }
+
+  .progress-seg{ height:4px; background:#E2E8F0; border-radius:9999px; flex:1; overflow:hidden; }
+  .progress-seg.done{ background: var(--primary); }
+  .progress-seg.current{ background: var(--secondary); position:relative; }
+  .progress-seg.current::after{
+    content:""; position:absolute; inset:0; background:var(--primary);
+    animation: pulse 1.3s ease-in-out infinite;
+  }
+  @keyframes pulse{ 0%,100%{opacity:.35} 50%{opacity:1} }
+
+  .btn-primary{ background: var(--primary); transition: background 150ms ease, transform 150ms ease; }
+  .btn-primary:hover{ background: #2563EB; }
+  .btn-primary:active{ transform: scale(0.98); }
+  .btn-primary:disabled{ opacity:.4; cursor:not-allowed; }
+
+  .bar-track{ height:10px; background:#E2E8F0; border-radius:9999px; overflow:hidden; }
+  .bar-fill{ height:100%; border-radius:9999px; transition:width 800ms cubic-bezier(.2,.8,.2,1); }
+
+  .card{ background:white; border:1px solid #E2E8F0; border-radius:1rem; }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-14" id="app"></div>
+
+<script>
+/* ============ DATA (shared logic with v1) ============ */
+
+const DIMENSIONS = [
+  {
+    id: "access", name: "工具核准與存取", short: "存取",
+    questions: [
+      {
+        title: "取得與使用AI工具的難易度",
+        hint: "例如：業務想用AI幫忙生成報價單／回覆客戶信件，需要跑多久的申請流程才能開始用？",
+        options: [
+          "AI工具幾乎用不了，或只核准很舊的版本，申請流程繁瑣||例如想用AI寫封客戶信，得簽簽呈跑三關才能申請帳號",
+          "主流AI工具已核准，但每次用在新場景都要另外申請/等審批||例如AI能用來寫信，但想拿來分析銷售數據，還要再簽一次新用途申請",
+          "AI工具已是日常標配，個人可自行決定怎麼用||例如業務、行政、產線主管都能自己決定要不要用AI處理各自的工作",
+          "不只工具開放，公司還有制度化推廣「怎麼用」的最佳實踐||例如公司有內部指引教大家怎麼下指令給AI做報表最有效率",
+          "AI工具已完全融入日常，沒人會特別意識到這是「額外申請的東西」||例如新人報到當天，AI帳號就跟Email一樣是標配"
+        ]
+      },
+      {
+        title: "AI產出物的落地能力",
+        hint: "例如：AI做好的月結報表/庫存分析，能不能直接接上公司的ERP或現有報表系統？",
+        options: [
+          "AI寫出來的東西沒有地方部署，只能停留在個人電腦||例如AI幫忙整理的庫存分析，只能存成Excel放在自己桌面，沒辦法接回系統",
+          "有基本的部署方式，但幾乎都要人手動一步步搬過去||例如要靠IT人員手動把AI產出的資料複製貼上進ERP",
+          "AI產出的東西可以走現有的系統/審核流程，跟人工產出待遇一樣||例如AI生成的採購單可以直接送進公司原本的簽核系統",
+          "部署流程已經高度自動化，AI產出跟人工產出走同一條無感流程||例如AI整理好的報表會自動更新到主管每天看的儀表板，不用人手動上傳",
+          "AI可以在被授權範圍內自己觸發後續流程||例如AI發現庫存低於安全水位，直接生成補貨單送進採購流程，不用人先按下確認"
+        ]
+      }
+    ]
+  },
+  {
+    id: "parallel", name: "Agent並行規模", short: "並行",
+    questions: [
+      {
+        title: "平常你會同時開幾個AI agent工作？",
+        hint: "例如：同時請AI處理「整理客戶訂單」跟「翻譯外銷合約」兩件事，還是一次只能盯著一件事？",
+        options: [
+          "幾乎不用，或很少用||例如公司幾乎沒人在日常工作中用AI",
+          "一次一個，我會盯著它做完再換下一個任務||例如先請AI寫完這封客訴回信，看過確認沒問題，才去請它處理下一件事",
+          "我會同時開好幾個（5-10個左右），在不同任務間切換查看||例如同時讓AI處理報價單、翻譯文件、整理客戶名單，自己來回檢查進度",
+          "組織裡有大量agent同時在跑（約百的量級），像在管理一群agent||例如各部門都有自己在跑的AI任務，你負責的是整體協調而非個別盯場",
+          "Agent數量多到無法逐一清點，多數由其他agent自動觸發||例如AI偵測到異常訂單，自己觸發另一個AI去查核，人不會逐一知道每個觸發事件"
+        ]
+      },
+      {
+        title: "工作是同步盯著，還是可以放著讓它自己跑？",
+        hint: "例如：交代AI「把這個月客戶對帳單整理好」，要一直守著看它做，還是可以先去忙別的事？",
+        options: [
+          "AI幾乎不能獨立做完一件事||例如AI寫沒兩句就需要人不斷補充指令才能繼續",
+          "我通常要坐在旁邊看著它做，中途隨時準備介入||例如AI在整理對帳單時，你得全程盯著怕它算錯",
+          "我可以先交辦，去忙別的事，過一段時間回來看結果||例如交代AI整理完對帳單，你先去開會，回來再檢查結果對不對",
+          "很多例行維護/整理工作不用特別開口，自己在背景持續進行||例如AI每週自動整理好庫存異動報告，不用人提醒",
+          "整個流程是閉環的，幾乎不需要手動啟動任務||例如月結流程從資料彙整到報表產出全自動跑完，人只在有異常時才會被通知"
+        ]
+      }
+    ]
+  },
+  {
+    id: "review", name: "審查方式", short: "審查",
+    questions: [
+      {
+        title: "AI做出來的東西，你通常怎麼確認沒問題？",
+        hint: "例如：AI寫的客戶回覆信、產線異常分析報告，你會逐字看過才送出，還是看結論合理就放行？",
+        options: [
+          "幾乎不敢用AI做的東西，或用了也整個重寫||例如AI寫的回信你覺得不放心，乾脆自己重打一封",
+          "我會逐字逐句讀過整份內容才放心||例如AI生成的報價單，每個品項單價都要自己再核對一次",
+          "我看的是最終結果和關鍵數字，不會逐字盯著產出過程||例如只看報價單總金額跟關鍵幾項單價是否合理，不逐字核對",
+          "比較常問「它是不是少了什麼背景資訊」，而非「這段內容對不對」||例如發現AI報價算錯，是因為沒告訴它某客戶有簽長期合約價，下次補上這個資訊即可",
+          "大部分時間只會被通知「有異常」，其他時候不太需要主動查||例如系統只會在報價明顯偏離歷史區間時通知你，其他都自動過關"
+        ]
+      },
+      {
+        title: "品質把關主要靠誰？",
+        hint: "例如：AI生成的報價單/採購建議出錯前，有沒有固定的檢查關卡？",
+        options: [
+          "沒有制度化的把關方式，全憑個人經驗||例如全靠老業務憑經驗一眼看出報價哪裡怪怪的",
+          "靠人工檢查，AI做的跟人做的用一樣標準審||例如AI跟新進業務寫的報價單，都要主管簽核才能出",
+          "有自動化檢查機制當第一關，人看過關後的結果||例如系統會自動比對歷史價格區間，異常才會跳出來給人看",
+          "自動化審查是預設會跑的，人是最後一道防線||例如報價單、採購單都先過自動比對規則，人只審核系統標記的例外案件",
+          "品質關卡能依風險程度自動調整鬆緊||例如小額日常採購全自動放行，大額或新供應商採購才會自動加嚴審查層級"
+        ]
+      }
+    ]
+  },
+  {
+    id: "trust", name: "組織信任與角色", short: "信任",
+    questions: [
+      {
+        title: "你在AI協作中的角色比較像？",
+        hint: "例如：你是一步步教AI處理採購流程的人，還是已經同時分派好幾個AI處理不同工作，自己退居管理角色？",
+        options: [
+          "幾乎沒有機會用AI協作||例如公司目前AI幾乎沒被實際用在工作上",
+          "一個人盯著一個AI，像帶新人一樣手把手教||例如你手把手教AI怎麼寫符合公司格式的報價單",
+          "一個人同時協調管理好幾個AI，像小組長在分派任務||例如你同時指揮AI處理報價、客服回覆、庫存整理三件事",
+          "管理的是「管理agent的人/機制」，自己退到更高層次看整體||例如你不再直接下指令給AI，而是設計好各部門怎麼用AI的規則跟流程",
+          "用「目標和方向」引導一整群AI，具體怎麼做交給下面自己決定||例如你只設定「本季要提升客戶回覆效率20%」，底下的AI/團隊自己想辦法達成"
+        ]
+      },
+      {
+        title: "主管/團隊對AI產出的信任程度？",
+        hint: "例如：老闆看到AI生成的財務分析或客戶名單建議，會直接採用，還是一定要人再親自過一遍？",
+        options: [
+          "完全不信任，能不用就不用||例如老闆看到「AI生成」四個字就直接要求人工重做",
+          "信任度低，任何重要決定都要人重新確認||例如AI建議的供應商名單，採購主管一定要全部重新查證一遍",
+          "中度信任，日常工作可放手，關鍵決策仍人工把關||例如日常回信AI可以直接發，但牽涉到報價/合約的還是要人簽核",
+          "高度信任，AI可以主動發起工作而不用先問過人||例如AI發現客戶訂單異常，直接發起查核流程，不用等人授權",
+          "信任已是預設狀態，只有出現「例外」才被特別關注||例如整個月AI自主處理的工作，主管只在系統跳出異常警示時才過問"
+        ]
+      }
+    ]
+  },
+  {
+    id: "governance", name: "治理與護欄成熟度", short: "治理",
+    questions: [
+      {
+        title: "成本／用量控管方式？",
+        hint: "例如：公司用AI工具的費用，是月底收到帳單才知道花多少，還是平常就能看到各部門分別花多少？",
+        options: [
+          "沒有特別控管，用多少算多少，不太清楚花費||例如年底才發現AI工具的訂閱費比預期高很多",
+          "有基本的預算上限，但主要是事後看報表才知道超支||例如每季看報表才發現某部門超用了",
+          "有即時的用量儀表板，可按人/部門追蹤花費||例如主管隨時能看到業務部這個月用了多少AI額度",
+          "能依專案/任務類型細緻分配成本，並依此調整策略||例如公司知道「客服用AI」比「報表分析用AI」划算，因此優先擴大客服應用",
+          "大規模自動化的成本控管已是常態管理的一部分||例如系統會自動依預算動態調整AI使用的模型等級，不需要人特別盯"
+        ]
+      },
+      {
+        title: "安全與存取控管的完整度？",
+        hint: "例如：客戶資料、供應商合約這類機密資訊，交給AI處理時，有沒有明確規範哪些資料能用？",
+        options: [
+          "沒有正式的存取控管或資料治理機制||例如員工可以隨意把客戶完整資料貼給AI工具，沒有人管",
+          "有基本的登入/權限控管，但AI相關的資料治理還沒特別規劃||例如系統帳號分權限，但沒人規定哪些資料不能餵給AI",
+          "有明確的資料使用規範，並套用在AI使用情境上||例如公司明訂「客戶身分證字號、合約金額不得輸入AI工具」",
+          "安全檢查、資料隔離等機制是自動化、預設開啟的||例如系統會自動偵測並擋下含敏感資料的內容被貼給AI",
+          "護欄會依工作的風險程度自動調整，且持續在調校||例如處理內部行政文件的AI權限寬鬆，處理客戶財務資料的AI則自動套用更嚴格的隔離規則"
+        ]
+      }
+    ]
+  }
+];
+
+const STAGE_NAMES = [
+  { name: "Gated", zh: "受限", role: "—", agents: "0", desc: "AI工具與能力尚未真正被組織打開，多數卡在核准與存取的第一關。" },
+  { name: "Assisted", zh: "輔助", role: "你 + 一個agent（配對）", agents: "~1", desc: "AI已進入日常工作，但仍需要人全程緊盯，像帶著一個新手在做事。" },
+  { name: "Parallel", zh: "平行", role: "Orchestrator（協調者）", agents: "~10", desc: "可以同時交辦多項工作給AI，審查的是結果而非過程。" },
+  { name: "Supervised Autonomy", zh: "受監督的自主", role: "Manager of managers（管理者的管理者）", agents: "~100", desc: "AI已能承擔大部分產出，人的角色轉為補足背景資訊與監督整體迴圈。" },
+  { name: "AI-native", zh: "原生", role: "VP steering by intent（用意圖引導）", agents: "~1,000+", desc: "AI已深度融入組織運作，以意圖引導、以例外監控。" }
+];
+
+// 每個階段對應 1-3 個「潛在原因」，非唯一定論——供使用者自行判斷哪個最貼近實況
+const DIAGNOSIS = {
+  access: { label: "工具核准與存取", byStage: [
+    [
+      { title: "審批流程與IT基礎建設沒跟上",
+        text: "工具核准得慢、部署管道又不存在，代表AI能不能被用，取決於流程效率而非工作需求。",
+        evidence: "外部研究顯示，多數AI agent試點從未真正進入正式使用階段，關鍵瓶頸常是部署基礎設施（權限隔離、治理、合規控管）而非AI本身。",
+        action: "找到能為AI工具與部署管道背書的技術決策者，把「核准」與「部署」的責任講清楚，建立明確、非case-by-case的核准路徑。" },
+      { title: "缺乏懂技術的人參與決策",
+        text: "核准與否常常是由不熟悉AI實際能力與風險的人在把關，導致決策傾向「一律限制」而非「依情境評估」。",
+        evidence: "研究指出，僅約三分之一組織在AI治理成熟度上達到堪用門檻，governance/accountability常是比技術本身更大的瓶頸。",
+        action: "讓技術背景的人參與核准流程的設計，而不只是執行流程本身既有的規則。" }
+    ],
+    [
+      { title: "每次新用途都要重新申請，缺乏可複用的評估框架",
+        text: "工具本身不是問題，問題是「換一個用途就要重新走一次流程」，這會讓人只敢用AI做已經核准過的事。",
+        evidence: "多份研究指出，「security and risk concerns」是企業擴大AI使用時最常見的障礙，往往是缺乏可重複套用的評估框架，而非單次核准本身的問題。",
+        action: "建立一套「用途評估」標準框架，讓同類型的新用途可以快速比照辦理。" },
+      { title: "舊系統/舊權限架構讓IT傾向完全鎖死",
+        text: "當底層系統老舊、權限設計混亂時，IT部門為了降低風險，往往選擇「乾脆都不開放」，而非「漸進式開放」。",
+        evidence: "研究指出legacy infrastructure是AI相關安全的系統性盲點，未修補的系統與混亂的權限設定，會讓管理者傾向採取最保守的鎖死策略。",
+        action: "先盤點與整理現有系統的權限架構，讓「漸進式開放」在技術上變得可行、可控。" }
+    ],
+    [
+      { title: "工具已開放，接下來要讓「怎麼用」被更多人知道",
+        text: "存取權限不是問題了，現在的機會是把已經摸索出來的好用法，變成組織內可以複製、教學的知識。",
+        evidence: "－",
+        action: "把用得好的案例整理成內部指引，並讓AI產出物能直接接上既有系統流程，減少「做完還要人搬一次」的斷點。" },
+      { title: "個別使用者各自摸索，經驗沒有沉澱成組織知識",
+        text: "好的用法散落在少數人身上，換人做同一件事又要重新摸索一次，組織整體的學習曲線沒有被壓縮。",
+        evidence: "－",
+        action: "指定專人定期蒐集內部好的AI使用案例，建立可搜尋、可複製的知識庫。" }
+    ],
+    [
+      { title: "基礎已具備，可持續深化自動化銜接",
+        text: "取得與部署都已相對成熟，接下來的重點是讓AI能自己觸發後續流程，減少人工銜接的最後一哩路。",
+        evidence: "－",
+        action: "盤點還剩下哪些「做完還要人手動搬一次」的流程，逐步授權AI在明確規則下自動觸發。" },
+      { title: "跨系統整合仍有斷點，AI只能觸發部分流程",
+        text: "AI能自動觸發的範圍常受限於系統之間的整合程度，若某些系統仍是資訊孤島，自動化就會卡在半路。",
+        evidence: "－",
+        action: "優先打通使用頻率最高、影響最大的那幾個系統間斷點，而非追求一次全面整合。" }
+    ]
+  ]},
+  parallel: { label: "Agent並行規模", byStage: [
+    [
+      { title: "缺乏可信賴的自我驗證機制",
+        text: "沒有自動化的品質關卡，只能靠人全程盯著，這讓「同時開好幾個」在心理上變得不可能——你沒有東西可以讓你放心離開。",
+        evidence: "研究指出，AI輸出的不確定性會讓使用者被迫把每次互動都當作「可能有問題」，形成「驗證負擔」，抵銷掉原本該省下的時間。",
+        action: "先為一類重複性高、風險較低的工作建立自動驗證關卡，讓「不用人全程盯」的信任基礎先在小範圍站穩。" },
+      { title: "工作習慣仍是同步、逐一處理",
+        text: "即使AI能力已經足夠，若團隊的工作節奏設計仍是「做完一件才能開始下一件」，並行的空間本身就沒被打開。",
+        evidence: "－",
+        action: "刻意練習「先交辦、再去忙別的事」的工作節奏，從低風險任務開始建立習慣。" }
+    ],
+    [
+      { title: "審查產出的份量已超出人力負荷",
+        text: "已經跨出「一次一件事」的限制，但審查方式沒有跟著升級，導致人力被大量的產出追著跑。",
+        evidence: "研究顯示，高AI採用團隊的產出量顯著上升，但相對應的審查/檢視工作量往往同步大幅增加，形成新的瓶頸點（例如merge量成長近倍數，審查時間也大幅增加）。",
+        action: "建立自動化的第一關檢查，讓人力只需要處理「過關後的結果」，而不是每件事都要重新確認。" },
+      { title: "同時操控多個session的context負擔過重",
+        text: "並行的agent數量增加後，人需要記住/整理的背景資訊量也跟著倍增，這是一種新的技能缺口，不是單純的心力問題。",
+        evidence: "研究將此獨立定義為「context engineering」能力缺口——結構化輸入、限制條件設計的能力，有別於傳統下指令技巧。",
+        action: "建立標準化的任務交辦範本，減少每次都要重新組織背景資訊的負擔。" }
+    ],
+    [
+      { title: "規模化並行下，品質一致性成為新課題",
+        text: "目前的重點已不是「敢不敢交辦」，而是「怎麼讓大量並行的工作維持一致品質」。",
+        evidence: "－",
+        action: "建立可視化的追蹤機制，讓管理者知道目前有哪些工作在並行進行、各自的風險等級與例外狀況。" },
+      { title: "缺乏跨agent的資源調度機制，容易衝突或重工",
+        text: "當並行數量拉高，若沒有協調機制，不同agent可能同時處理到同一件事，或搶用同樣的資源。",
+        evidence: "－",
+        action: "建立簡單的任務登記/認領機制，避免不同agent重複處理同一件工作。" }
+    ],
+    [
+      { title: "已具備高度並行與自動觸發能力",
+        text: "多數工作已能自動串接，接下來可以持續擴大「背景自動運行」的工作範圍。",
+        evidence: "－",
+        action: "定期盤點哪些例行工作仍需要人手動開始，逐步轉為背景自動觸發。" },
+      { title: "背景自動化的可視性不足，人難以掌握全貌",
+        text: "當多數工作都在背景自動進行，管理者反而容易失去「現在整體發生了什麼事」的掌握度。",
+        evidence: "－",
+        action: "建立整體運作總覽儀表板，即使不用逐一介入，也能一眼看出全貌與異常。" }
+    ]
+  ]},
+  review: { label: "審查方式", byStage: [
+    [
+      { title: "對AI輸出品質的信任赤字（含幻覺疑慮）",
+        text: "擔心AI「講得很有把握但其實是錯的」，是逐字審查最常見的心理原因。",
+        evidence: "調查顯示，僅約四分之一的受訪者「非常」或「相當」信任AI的產出，近三成信任度偏低甚至完全不信任——信任赤字是普遍現象，不是個案。",
+        action: "從風險最低的工作類型開始，讓「AI產出 + 自動化驗證關卡」的組合逐步累積可驗證的信任紀錄。" },
+      { title: "沒有自動化驗證機制，只能靠人力全部重查",
+        text: "即使AI本身沒問題，若缺乏任何自動比對/檢查機制，人也只能選擇「全部自己再看一次」作為唯一的把關方式。",
+        evidence: "研究指出，缺乏自我驗證機制時，「驗證負擔」會取代原本該省下的時間，這與信任問題是相關但不同的兩件事。",
+        action: "優先建立最基本的自動比對機制（如歷史數據比對），把部分驗證工作從人力轉移到系統。" }
+    ],
+    [
+      { title: "審查工作量隨AI產出量同步暴增",
+        text: "已經開始信任AI能把過程做對，只看結果，但若沒有自動異常提示機制，審查工作量還是會持續增加。",
+        evidence: "研究指出，AI提升產出速度後，若下游審查流程沒有同步強化，審查工作量會不成比例地增加，形成新瓶頸。",
+        action: "針對關鍵數字建立自動比對/異常提示機制，讓人力只需要處理系統標記出來的例外。" },
+      { title: "品質把關仍全靠人力經驗，尚未制度化",
+        text: "把關這件事還停留在「靠資深員工的經驗」，沒有變成可以被複製、教學、稽核的制度。",
+        evidence: "－",
+        action: "把資深員工的判斷邏輯整理成明確的檢查規則，逐步轉化為系統可執行的自動檢查項目。" }
+    ],
+    [
+      { title: "審查重點已轉向「context是否足夠」",
+        text: "問題不再是「AI做得對不對」，而是「AI是否掌握了足夠的背景資訊」——這是關鍵但容易被低估的技能缺口。",
+        evidence: "多份研究將此獨立定義為「context engineering」能力，有別於傳統的下指令技巧。",
+        action: "建立標準化的「背景資訊補充」範本，讓補充context這件事本身可以被複製、教學。" },
+      { title: "team成員之間context補充的品質不一致",
+        text: "有些人很懂得怎麼給AI背景資訊，有些人不太會，導致同一套流程在不同人手上結果差異很大。",
+        evidence: "－",
+        action: "把補充context這件事變成可教學、可示範的技能，而非只靠個人悟性。" }
+    ],
+    [
+      { title: "已具備例外監控式的審查機制",
+        text: "多數時間只需處理系統主動標記的異常，接下來的重點是持續校準「什麼算異常」。",
+        evidence: "－",
+        action: "定期檢視異常標記的準確度，依實際運作結果調整判定門檻。" },
+      { title: "異常判定規則仍偏靜態，未隨業務變化更新",
+        text: "判定規則若長期沒有調整，會漸漸與實際業務現況脫節，導致誤判或漏判增加。",
+        evidence: "－",
+        action: "建立規則的定期回顧週期，確保判定邏輯跟著業務變化持續更新。" }
+    ]
+  ]},
+  trust: { label: "組織信任與角色", byStage: [
+    [
+      { title: "過去的事故經驗，讓組織預設「全面複查」",
+        text: "即使AI做對了，流程設計上仍要求人從頭確認一遍——這通常是組織授權文化沒跟上，而非AI能力不足。",
+        evidence: "研究顯示，企業曾發生AI相關事故的比例並不低，這使得許多組織傾向以「人工全面複查」作為預設的風險控管方式。",
+        action: "從單一低風險決策類型開始，明確定義「AI可自主決定」與「必須人工把關」的邊界，並記錄下來、逐步建立信任。" },
+      { title: "決策授權與責任歸屬不清楚",
+        text: "沒有人明確被授權「可以讓AI自己做決定」，導致預設答案永遠是「還是要問過人」。",
+        evidence: "研究指出，AI規模化程度低的組織，卡點常是governance與accountability歸屬不清，而非技術限制。",
+        action: "明確指定誰有權限核准AI在特定情境下自主決策，並公開這個授權範圍。" }
+    ],
+    [
+      { title: "「關鍵決策」的範圍界定過寬，尚未依風險分級",
+        text: "日常工作可放手，但「關鍵決策」往往被定義得過於寬泛，導致本可授權的中風險決策也被一律打回人工。",
+        evidence: "高績效組織通常採用human-in-the-loop的分層把關機制，而非「日常放手、關鍵全部重來」的二分法。",
+        action: "把「關鍵決策」拆分出風險等級，讓部分中風險決策也能適用「AI主動發起、人只需核准」的模式。" }
+    ],
+    [
+      { title: "信任已內化為制度，但仍待文件化",
+        text: "角色定位已從「盯著做」轉為「設計規則」，代表信任已建立，接下來要確保這套信任基礎不依賴特定個人。",
+        evidence: "－",
+        action: "把目前運作良好的信任邊界規則文件化，確保新加入的成員也能快速接手同樣的信任基礎。" },
+      { title: "信任邊界規則依賴少數人記憶，未系統化留存",
+        text: "「什麼情況可以放手、什麼不行」目前可能只存在少數主管腦中，一旦人員異動，信任基礎容易跟著流失。",
+        evidence: "－",
+        action: "把信任邊界的判斷邏輯轉化為書面規則，並定期跟實際運作結果核對是否需要調整。" }
+    ],
+    [
+      { title: "信任已是預設狀態，管理聚焦例外事件",
+        text: "挑戰轉為「如何在規模擴大後，仍維持例外監控的精準度」。",
+        evidence: "－",
+        action: "持續投資在例外偵測的準確性上，避免規模擴大後例外訊號被稀釋或忽略。" },
+      { title: "例外事件的分類/優先順序機制尚待優化",
+        text: "當例外數量隨規模增加，若沒有分級機制，重要的例外容易被淹沒在大量低風險提示中。",
+        evidence: "－",
+        action: "為例外事件建立風險分級與優先排序機制，確保真正重要的訊號不被忽略。" }
+    ]
+  ]},
+  governance: { label: "治理與護欄成熟度", byStage: [
+    [
+      { title: "缺乏成本控管，用量與花費不透明",
+        text: "沒有預算上限或即時追蹤機制，代表成本可能已經悄悄失控，卻要等到帳單才會發現。",
+        evidence: "調查顯示，多數企業的AI成本預測誤差超過一成，近四分之一低估五成以上，僅不到一半的企業設有正式的財務護欄機制。",
+        action: "立即建立基本的用量/預算上限提醒機制，即使簡陋，也比完全沒有防線好。" },
+      { title: "資料治理規範缺席，機密外洩風險無防線",
+        text: "沒有明確規範哪些資料可以輸入AI工具，代表客戶資料、合約金額等機密資訊，隨時可能被無意間外流。",
+        evidence: "研究普遍指出，資料治理與存取控管不足是企業AI導入中最常見、也最容易被忽略的風險缺口之一。",
+        action: "立即明確規範哪些資料類型絕對不能輸入AI工具，這是投入成本最低、但能防止最大下檔風險的一步。" }
+    ],
+    [
+      { title: "有基本規則，但都是事後才發現問題",
+        text: "「有規則」和「規則即時生效」是兩件事——目前仍停留在「出事後才知道」，無法在問題發生當下攔截。",
+        evidence: "－",
+        action: "把成本與資料安全的控管從「定期報表檢視」升級為「即時儀表板/自動攔截」，縮短問題發現與處理的時間差。" },
+      { title: "財務護欄機制尚未成熟到能主動示警",
+        text: "預算上限存在，但缺乏能在超支「發生前」示警或自動限制的機制。",
+        evidence: "研究指出，僅不到一半企業設有正式財務護欄，多數仍停留在事後報表檢視的階段。",
+        action: "優先為高風險/高用量的部門建立主動示警的預算控管機制。" }
+    ],
+    [
+      { title: "已有即時追蹤機制，正朝精細化治理邁進",
+        text: "基礎治理已到位，接下來的機會是讓治理策略更貼合實際業務——依專案、風險等級調整資源與規範的鬆緊。",
+        evidence: "僅一成多的組織能讓AI agent在正式環境中獲得完整的security/IT核准，顯示細緻化、依風險分級的護欄設計仍是業界普遍的機會點。",
+        action: "建立依風險等級分層的護欄設計（高風險工作嚴管、低風險工作放寬），而非一套標準套用所有情境。" },
+      { title: "跨專案的治理標準不一致，各自為政",
+        text: "不同專案/部門可能各自發展出一套治理做法，缺乏統一標準，長期會增加管理與稽核的複雜度。",
+        evidence: "－",
+        action: "盤點目前各專案的治理做法，收斂出一套可共用的基準規範，保留必要的彈性空間即可。" }
+    ],
+    [
+      { title: "治理機制已高度成熟，可持續自動調校",
+        text: "治理已是常態管理的一部分，接下來的重點是讓護欄能隨實際使用狀況持續自我調整。",
+        evidence: "－",
+        action: "建立護欄有效性的定期回顧機制，確保規則隨業務變化與新風險類型持續更新。" },
+      { title: "護欄調校仍仰賴人工週期性檢視，非即時動態",
+        text: "即使治理已成熟，若調整護欄仍需要人工定期介入，遇到風險變化快的情境時反應速度會不夠。",
+        evidence: "－",
+        action: "評估哪些護欄調整規則可以邏輯化、自動化，減少對人工週期性檢視的依賴。" }
+    ]
+  ]}
+};
+
+/* ============ NEXT-STEP SYNTHESIS ============
+   不機械式地只抓最低分構面，而是先綜合判讀5個分數的整體形狀，
+   歸納出可能的組織樣貌（archetype），再從這個綜合診斷延伸出2-3個建議。 */
+function nameOf(id){ return DIMENSIONS.find(d=>d.id===id).name; }
+
+function classifyProfile(dimScores){
+  const ids = DIMENSIONS.map(d=>d.id);
+  const scores = ids.map(id=>dimScores[id]);
+  const mean = scores.reduce((a,b)=>a+b,0)/scores.length;
+  const spread = Math.max(...scores) - Math.min(...scores);
+  const sorted = ids.slice().sort((a,b)=>dimScores[a]-dimScores[b]);
+  const lowest = sorted[0], secondLowest = sorted[1], highest = sorted[sorted.length-1];
+
+  let maxOpId = OPERATIONAL_DIMS[0];
+  OPERATIONAL_DIMS.forEach(id => { if(dimScores[id] > dimScores[maxOpId]) maxOpId = id; });
+  let minRcId = RISK_CONTROL_DIMS[0];
+  RISK_CONTROL_DIMS.forEach(id => { if(dimScores[id] < dimScores[minRcId]) minRcId = id; });
+  const opGap = dimScores[maxOpId] - dimScores[minRcId];
+
+  // 1. 整體都低：還沒真正站穩腳步
+  if(mean < 1.2){
+    return {
+      archetype: "起步觀望型",
+      narrative: `五個構面的分數普遍偏低（平均 ${mean.toFixed(1)} 分），代表AI目前還沒有真正在組織內站穩腳步。這通常不是能力或意願的問題，而是還沒有一個具體的起點讓大家看到成效。`,
+      actions: [
+        `從單一低風險、重複性高的工作流程開始試點，先建立一個看得到成效的案例，而不是同時想解決所有構面。`,
+        `在啟動任何規模化嘗試前，先建立最基本的資料使用規範與預算上限——這是投入成本最低、卻能防止最大風險的第一步。`,
+        `指定一位技術背景的人參與AI工具的核准與導入決策，優先加速「${nameOf(lowest)}」這個目前最落後的構面。`
+      ]
+    };
+  }
+
+  // 2. 操作性構面明顯超前風控性構面：衝太快
+  if(opGap >= GAP_THRESHOLD){
+    return {
+      archetype: "衝刺冒進型",
+      narrative: `如同上方落差警示所述，你們在「${nameOf(maxOpId)}」等操作性構面已經跑得不慢，但「${nameOf(minRcId)}」明顯跟不上——這代表接下來的優先順序，不是繼續往前衝，而是先把落後的防線補齊。`,
+      actions: [
+        `在繼續擴大「${nameOf(maxOpId)}」的規模之前，先把「${nameOf(minRcId)}」補到接近其他構面的水準（可參考上方各構面診斷中的具體行動）。`,
+        `為現有已在運行的並行/自動化工作，回溯性地補上最基本的治理防線（如資料使用規範、預算上限），而非只在啟動新工作時才要求。`,
+        `建立一份簡單的「信任與治理邊界」對照表，讓已經跑得快的操作性工作有明確依循，避免落差持續擴大。`
+      ]
+    };
+  }
+
+  // 3. 只有存取單獨落後，其他構面都相對成熟：制度已備妥，但開放範圍很窄
+  const othersMean = ids.filter(id=>id!=="access").reduce((a,id)=>a+dimScores[id],0) / 4;
+  if(lowest === "access" && othersMean - dimScores.access >= 1.0 && othersMean >= 2.5){
+    return {
+      archetype: "少數特許型",
+      narrative: `「治理／信任／審查」這些制度性的構面都已經相對成熟（平均約 ${othersMean.toFixed(1)} 分），但「存取」明顯是唯一落後的一塊——這代表組織不是不會用AI，而是把使用範圍刻意或被迫收得很窄。這通常來自三種不太一樣的原因，可以自行判斷哪個最接近實況：可能是目前只有少數具備高層信任或特定職位的人被允許使用（菁英特許）；也可能是IT基礎建設還撐不起更大範圍的部署（基礎建設缺口）；或者是預算/token額度有限，只能先給部分角色（成本限制）。`,
+      actions: [
+        `如果是「菁英特許」：把目前依賴個人信任的非正式開放，轉成一套可複製、可申請的制度化擴大流程，避免永遠卡在少數人手上。`,
+        `如果是「IT基礎建設缺口」：優先盤點部署管道與系統整合的技術債，這是需要投資時間解決的問題，而非單純調整政策就能解決。`,
+        `如果是「預算/token限制」：採取分級策略——把低風險、高頻率的工作交給較便宜的方案先行開放，把預算留給真正高價值的場景。`
+      ]
+    };
+  }
+
+  // 4. 落差小、整體偏高：均衡且成熟
+  if(spread <= 1.0 && mean >= 3){
+    return {
+      archetype: "均衡成熟型",
+      narrative: `五個構面發展得相當均衡，且整體水準已經不低（平均 ${mean.toFixed(1)} 分）——你們不是卡在單一明顯短板，而是整體正穩定地往下一階段推進。`,
+      actions: [
+        `優先補強「${nameOf(lowest)}」，這是目前唯一還沒完全跟上其他構面的部分，補齊後有機會讓整體評級直接跳一階（記得整體評級是取最低分）。`,
+        `把目前運作良好的做法（尤其是「${nameOf(highest)}」）文件化，確保不依賴特定個人也能持續運作、順利傳承。`,
+        `可以考慮啟動下一階段的規模化試點，但務必維持現有治理／信任的把關強度同步擴大，避免出現落差警示中提到的風險型態。`
+      ]
+    };
+  }
+
+  // 4. 落差小、整體偏中低：同步起步，但沒有示範案例
+  if(spread <= 1.0){
+    return {
+      archetype: "同步起步型",
+      narrative: `五個構面的發展速度相當一致，沒有明顯落後的單一構面——但這也代表目前還沒有哪個地方特別突出，能成為組織內部的示範案例，帶動其他人跟進。`,
+      actions: [
+        `與其平均分攤心力在5個構面，建議刻意挑一個構面（例如「${nameOf(highest)}」）優先推進到下一階段，做出一個看得見的成功案例。`,
+        `把這個示範案例的具體做法整理成可複製的內部指引，再推廣到其他構面，而不是同時鋪開所有戰線。`,
+        `觀察其中一個構面推進後，是否會自然帶動其他構面（例如並行能力提升後，審查方式往往也要跟著升級）。`
+      ]
+    };
+  }
+
+  // 5. 預設：有明顯落後但不屬於上述特定型態
+  const stage1 = Math.min(Math.floor(dimScores[lowest]), 3);
+  const stage2 = Math.min(Math.floor(dimScores[secondLowest]), 3);
+  const action1 = DIAGNOSIS[lowest].byStage[stage1][0].action;
+  const action2 = DIAGNOSIS[secondLowest].byStage[stage2][0].action;
+  return {
+    archetype: "局部落後型",
+    narrative: `五個構面中，「${nameOf(lowest)}」與「${nameOf(secondLowest)}」明顯落後其他構面，這通常代表組織的投入或關注力還沒有平均分配到這兩塊，而不是能力上做不到。`,
+    actions: [
+      `針對「${nameOf(lowest)}」：${action1}`,
+      `針對「${nameOf(secondLowest)}」：${action2}`,
+      `建議定期重新填寫這份盤點，觀察這兩個構面補強後，整體評級與構面落差是否隨之改善。`
+    ]
+  };
+}
+
+function renderNextSteps(dimScores){
+  const p = classifyProfile(dimScores);
+  return `
+    <div class="mono text-[10px] font-bold text-white bg-orange-500 px-2.5 py-1 rounded-full uppercase tracking-wider inline-block mb-3">綜合診斷 · ${p.archetype}</div>
+    <p class="text-sm text-slate-700 leading-relaxed mb-4">${p.narrative}</p>
+    <div class="flex flex-col gap-3">
+      ${p.actions.map((a,i) => `
+        <div class="flex gap-3 items-start">
+          <div class="mono text-xs font-bold text-orange-600 bg-white border border-orange-300 rounded-full w-6 h-6 flex items-center justify-center shrink-0 mt-0.5">${i+1}</div>
+          <p class="text-sm text-slate-700 leading-relaxed">${a}</p>
+        </div>`).join('')}
+    </div>
+  `;
+}
+
+/* ============ STATE ============ */
+let answers = {};
+let flatQuestions = [];
+DIMENSIONS.forEach(d => d.questions.forEach((q,i) => flatQuestions.push({dimId:d.id, dimName:d.name, qIdx:i, q})));
+let currentQ = -1;
+
+const app = document.getElementById('app');
+
+function render(){
+  if(currentQ === -1){ renderIntro(); return; }
+  if(currentQ === flatQuestions.length){ renderResults(); return; }
+  renderQuestion();
+}
+
+function renderIntro(){
+  app.innerHTML = `
+    <div class="card p-8 sm:p-10 mb-6">
+      <div class="mono text-xs tracking-widest text-blue-600 font-semibold mb-3">AI ADOPTION GAUGE · 傳產版</div>
+      <h1 class="text-3xl sm:text-4xl font-bold tracking-tight mb-4">AI導入盤點系統</h1>
+      <p class="text-slate-600 leading-relaxed max-w-xl">用 10 道情境題，量出你的組織目前落在哪個AI應用階段——並找出真正拖住你們的那個短板。</p>
+    </div>
+
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
+      ${DIMENSIONS.map(d => `
+        <div class="card p-4 text-center">
+          <div class="font-bold text-blue-600 mb-1">${d.short}</div>
+          <div class="mono text-[11px] text-slate-500 leading-relaxed">${d.name}</div>
+        </div>`).join('')}
+    </div>
+
+    <div class="card p-6 mb-8 border-l-4 border-orange-500 rounded-l-none">
+      <p class="text-sm text-slate-600 leading-relaxed">
+        <b class="text-slate-900">評分邏輯：</b>五個構面各自計分（0-4），最終整體評級取「五個構面中最低分」——因為AI導入成熟度就像木桶，決定整體上限的永遠是最短的那塊板。
+      </p>
+      <p class="text-sm text-slate-500 mt-3">全程約需 3-4 分鐘，共 10 題，每題請選最貼近你們公司現況的敘述。</p>
+    </div>
+
+    <div class="card p-6 mb-8">
+      <h3 class="mono text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">背景知識框架來源</h3>
+      <p class="text-sm text-slate-600 leading-relaxed mb-2">
+        本系統的五階段成熟度架構，改編自 Anthropic <b class="text-slate-900">Claude Code 產品團隊負責人 Boris Cherny</b> 於 2026/7/16 發表的文件《Steps of AI Adoption》，原文提出 0（Gated）至 4（AI-native）的五階段AI導入模型。
+      </p>
+      <p class="text-sm text-slate-500 leading-relaxed mb-3">
+        本系統將原文架構拆解為5個可自評的構面（工具存取、Agent並行、審查方式、組織信任、治理護欄），並額外參考企業AI導入相關研究，補充診斷邏輯與改善建議。
+      </p>
+      <div class="flex flex-col gap-1 mono text-xs">
+        <a href="https://claude.ai/code/artifact/bfdfaef9-bc62-4dfe-ba9e-c58a26c9accf" target="_blank" rel="noopener" class="text-blue-600 hover:text-blue-700 hover:underline break-all">→ 原始文件（Claude Artifact）</a>
+        <a href="https://www.explainx.ai/blog/boris-cherny-steps-ai-adoption-claude-code-july-2026" target="_blank" rel="noopener" class="text-blue-600 hover:text-blue-700 hover:underline break-all">→ 第三方文章整理（ExplainX）</a>
+      </div>
+    </div>
+
+    <button class="btn-primary text-white font-semibold px-8 py-4 rounded-xl cursor-pointer shadow-sm" onclick="startQuiz()">
+      開始盤點 →
+    </button>
+  `;
+}
+
+function startQuiz(){ currentQ = 0; render(); }
+
+function renderQuestion(){
+  const item = flatQuestions[currentQ];
+  const key = `${item.dimId}-${item.qIdx}`;
+  const selected = answers[key];
+
+  const segs = flatQuestions.map((_, i) => {
+    let cls = 'progress-seg';
+    if(i < currentQ) cls += ' done';
+    else if(i === currentQ) cls += ' current';
+    return `<div class="${cls}"></div>`;
+  }).join('');
+
+  app.innerHTML = `
+    <div class="flex justify-between items-center mb-2">
+      <span class="mono text-xs font-semibold text-blue-600 uppercase tracking-wider">${item.dimName}</span>
+      <span class="mono text-xs text-slate-400">${currentQ+1} / ${flatQuestions.length}</span>
+    </div>
+    <div class="flex gap-1.5 mb-8">${segs}</div>
+
+    <div class="mb-8">
+      <div class="mono text-xs text-slate-400 mb-2">構面 ${DIMENSIONS.findIndex(d=>d.id===item.dimId)+1} · 題 ${item.qIdx+1}</div>
+      <h2 class="text-xl sm:text-2xl font-bold mb-3">${item.q.title}</h2>
+      <p class="text-sm text-slate-500 bg-blue-50 border-l-4 border-blue-400 rounded-r-lg px-4 py-3 mb-6 leading-relaxed">${item.q.hint}</p>
+
+      <div class="flex flex-col gap-2.5">
+        ${item.q.options.map((opt, lvl) => {
+          const [text, example] = opt.split('||');
+          const sel = selected === lvl ? 'selected' : '';
+          return `
+            <div class="opt ${sel} card p-4 flex gap-4 items-start cursor-pointer" onclick="selectOption(${currentQ}, ${lvl})">
+              <div class="opt-level mono w-7 h-7 shrink-0 rounded-full bg-slate-100 text-slate-500 font-semibold text-sm flex items-center justify-center mt-0.5">${lvl}</div>
+              <div class="text-sm leading-relaxed">
+                <span class="text-slate-800">${text}</span>
+                <span class="block text-slate-400 text-xs mt-1">${example}</span>
+              </div>
+            </div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <div class="flex justify-between items-center">
+      <button class="text-slate-500 hover:text-slate-800 text-sm font-medium cursor-pointer px-4 py-2 transition-colors ${currentQ===0?'invisible':''}" onclick="prevQ()">← 上一題</button>
+      <button class="btn-primary text-white font-semibold px-6 py-3 rounded-xl cursor-pointer shadow-sm" onclick="nextQ()" ${selected===undefined?'disabled':''}>
+        ${currentQ === flatQuestions.length-1 ? '查看結果 →' : '下一題 →'}
+      </button>
+    </div>
+  `;
+}
+
+function selectOption(qi, lvl){
+  const item = flatQuestions[qi];
+  answers[`${item.dimId}-${item.qIdx}`] = lvl;
+  render();
+}
+function nextQ(){ currentQ++; render(); }
+function prevQ(){ currentQ--; render(); }
+
+function computeScores(){
+  const dimScores = {};
+  DIMENSIONS.forEach(d => {
+    const vals = d.questions.map((q,i) => answers[`${d.id}-${i}`]);
+    dimScores[d.id] = vals.reduce((a,b)=>a+b,0) / vals.length;
+  });
+  const overall = Math.min(...Object.values(dimScores));
+  return { dimScores, overall };
+}
+
+function gaugeColor(pct){
+  // red -> yellow -> green gradient by percentage
+  if(pct < 0.34) return '#EF4444';
+  if(pct < 0.67) return '#F59E0B';
+  return '#22C55E';
+}
+
+function renderResults(){
+  const { dimScores, overall } = computeScores();
+  const stageFloor = Math.floor(overall);
+  const stage = STAGE_NAMES[stageFloor];
+  const weakDims = DIMENSIONS.filter(d => Math.abs(dimScores[d.id] - overall) < 0.001);
+  const pct = overall/4;
+  const gColor = gaugeColor(pct);
+
+  app.innerHTML = `
+    <div class="card p-8 sm:p-10 text-center mb-6">
+      <div class="mono text-xs tracking-widest text-blue-600 font-semibold mb-4">整體評級</div>
+      <div class="flex justify-center mb-2">${renderGauge(overall, gColor)}</div>
+      <div class="text-3xl font-bold mt-2" style="color:${gColor}">${stage.zh} · ${stage.name}</div>
+      <div class="mono text-xs text-slate-400 mt-1">READING ${overall.toFixed(1)} / 4.0</div>
+      <p class="text-sm text-slate-500 max-w-md mx-auto mt-4 leading-relaxed">${stage.desc}</p>
+    </div>
+
+    <div class="card p-6 sm:p-8 mb-6">
+      <h3 class="mono text-xs font-bold text-blue-600 uppercase tracking-widest mb-4">Boris五階段模型 · 你在這裡</h3>
+      ${renderStageTable(stageFloor)}
+    </div>
+
+    <div class="card p-6 sm:p-8 mb-6 bg-orange-50 border-orange-200">
+      <h3 class="mono text-xs font-bold text-orange-600 uppercase tracking-widest mb-4">下一步：優先行動建議</h3>
+      ${renderNextSteps(dimScores)}
+    </div>
+
+    ${renderGapWarning(dimScores)}
+
+    <div class="card p-6 sm:p-8 mb-6">
+      <h3 class="mono text-xs font-bold text-blue-600 uppercase tracking-widest mb-5">構面剖面</h3>
+      <div class="flex justify-center mb-4">${renderRadar(dimScores, weakDims.map(w=>w.id))}</div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 mt-2">
+        ${DIMENSIONS.map(d => {
+          const s = dimScores[d.id];
+          const isWeak = weakDims.some(w=>w.id===d.id);
+          return `
+            <div class="flex justify-between items-center py-1.5 text-sm border-b border-slate-100">
+              <span class="${isWeak?'text-red-600 font-medium':'text-slate-600'}">${d.name}${isWeak?' ▾':''}</span>
+              <span class="mono ${isWeak?'text-red-600':'text-slate-400'}">${s.toFixed(1)}</span>
+            </div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <div class="card p-6 sm:p-8 mb-6">
+      <h3 class="mono text-xs font-bold text-blue-600 uppercase tracking-widest mb-2">各構面診斷：潛在問題與可行方案</h3>
+      <p class="text-xs text-slate-400 mb-5">以下為依現況推測的潛在原因，非唯一定論，請自行判斷哪個最貼近你們的實際情況。標紅為拖累整體評級的短板構面。</p>
+      ${DIMENSIONS.map(d => {
+        const diag = DIAGNOSIS[d.id];
+        const isWeak = weakDims.some(w=>w.id===d.id);
+        const dStage = Math.min(Math.floor(dimScores[d.id]), 3);
+        const causes = diag.byStage[dStage];
+        const tagClass = isWeak ? 'bg-red-500' : 'bg-slate-400';
+        const tagText = isWeak ? `短板 · ${diag.label}` : diag.label;
+        return `
+          <div class="mb-8 pb-8 border-b border-slate-100 last:border-0 last:mb-0 last:pb-0">
+            <span class="inline-block mono text-[10px] font-bold text-white ${tagClass} px-2.5 py-1 rounded-full uppercase tracking-wider mb-4">${tagText}</span>
+            ${causes.map((c, i) => `
+              <div class="${i>0?'mt-5 pt-5 border-t border-dashed border-slate-200':''}">
+                <div class="flex items-baseline gap-2 mb-2">
+                  <span class="mono text-xs text-slate-400">可能原因 ${i+1} / ${causes.length}</span>
+                </div>
+                <div class="text-lg font-bold mb-2">${c.title}</div>
+                <p class="text-sm text-slate-600 leading-relaxed mb-3">${c.text}</p>
+                ${c.evidence !== '－' ? `<div class="mono text-xs text-slate-500 bg-slate-50 border-l-2 border-slate-300 rounded-r-lg px-3 py-2.5 mb-3 leading-relaxed">研究依據：${c.evidence}</div>` : ''}
+                <div class="text-sm text-slate-800 border-l-2 border-green-500 pl-4 leading-relaxed"><b class="text-green-600">怎麼改善：</b>${c.action}</div>
+              </div>`).join('')}
+          </div>`;
+      }).join('')}
+    </div>
+
+    <div class="flex justify-center">
+      <button class="text-slate-500 hover:text-slate-800 text-sm font-medium cursor-pointer transition-colors" onclick="restart()">↺ 重新填寫</button>
+    </div>
+  `;
+}
+
+const OPERATIONAL_DIMS = ["access", "parallel", "review"];
+const RISK_CONTROL_DIMS = ["trust", "governance"];
+const GAP_THRESHOLD = 1.5;
+
+function renderGapWarning(dimScores){
+  const opNames = { access: "存取", parallel: "並行", review: "審查" };
+  const rcNames = { trust: "信任", governance: "治理" };
+
+  let maxOpId = OPERATIONAL_DIMS[0];
+  OPERATIONAL_DIMS.forEach(id => { if(dimScores[id] > dimScores[maxOpId]) maxOpId = id; });
+  let minRcId = RISK_CONTROL_DIMS[0];
+  RISK_CONTROL_DIMS.forEach(id => { if(dimScores[id] < dimScores[minRcId]) minRcId = id; });
+
+  const gap = dimScores[maxOpId] - dimScores[minRcId];
+  if(gap < GAP_THRESHOLD) return '';
+
+  return `
+    <div class="card p-6 sm:p-8 mb-6 bg-red-50 border-red-200">
+      <div class="flex items-start gap-3">
+        <span class="mono text-[10px] font-bold text-white bg-red-600 px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0 mt-0.5">落差警示</span>
+        <div>
+          <h3 class="text-base font-bold text-red-700 mb-2">規模化速度，可能超前於風控能力</h3>
+          <p class="text-sm text-slate-700 leading-relaxed mb-3">
+            你們的「${opNames[maxOpId]}」構面已達 <b class="mono">${dimScores[maxOpId].toFixed(1)}</b> 分，但「${rcNames[minRcId]}」構面只有 <b class="mono">${dimScores[minRcId].toFixed(1)}</b> 分——落差達 ${gap.toFixed(1)} 分。
+            這不只是「治理構面比較弱」的問題，而是一種特定的風險組合：組織已經在<b>沒有足夠護欄的狀態下</b>擴大AI的使用規模與自主程度，暴露的風險敞口比「全面都低分」的組織更高。
+          </p>
+          <div class="mono text-xs text-slate-500 bg-white/60 border-l-2 border-red-300 rounded-r-lg px-3 py-2.5 mb-3 leading-relaxed">
+            研究依據：McKinsey調查顯示，51%企業曾發生AI相關事故；高績效組織通常是在擴大自主權的同時，同步強化human-in-the-loop與集中監督機制，而非先衝規模再補治理。
+          </div>
+          <div class="text-sm text-slate-800 border-l-2 border-red-500 pl-4 leading-relaxed">
+            <b class="text-red-700">優先建議：</b>在繼續擴大「${opNames[maxOpId]}」構面的規模之前，先把「${rcNames[minRcId]}」補到至少與其他構面相近的水準，避免規模與風控的落差持續擴大。
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderStageTable(stageFloor){
+  const rows = STAGE_NAMES.map((s, i) => {
+    const isCurrent = i === stageFloor;
+    return `
+      <div class="grid grid-cols-[28px_1fr_auto] sm:grid-cols-[32px_140px_1fr_90px] items-center gap-2 sm:gap-4 px-3 sm:px-4 py-3 rounded-lg ${isCurrent ? 'bg-blue-50 ring-1 ring-blue-400' : ''}">
+        <div class="mono text-xs font-bold ${isCurrent?'text-blue-600':'text-slate-300'}">${i}</div>
+        <div class="${isCurrent?'text-blue-700 font-bold':'text-slate-600 font-medium'} text-sm">
+          ${s.zh}
+          <span class="hidden sm:inline mono text-xs text-slate-400 font-normal">· ${s.name}</span>
+        </div>
+        <div class="text-xs text-slate-500 leading-relaxed hidden sm:block">${s.role}</div>
+        <div class="mono text-xs text-right ${isCurrent?'text-blue-600 font-bold':'text-slate-400'}">${s.agents}</div>
+      </div>
+      ${isCurrent ? `<div class="pl-3 sm:pl-11 pr-3 sm:pr-4 pb-2 -mt-1"><span class="mono text-[10px] font-bold text-white bg-blue-600 px-2 py-0.5 rounded-full">◄ 你在這裡</span></div>` : ''}
+    `;
+  }).join('');
+  return `<div class="flex flex-col gap-1">${rows}</div>`;
+}
+
+function renderGauge(value, color){
+  const pct = value/4;
+  const angle = -120 + pct*240;
+  const R = 72, size = 200, cx = size/2, cy = size/2+8;
+  function polar(cx,cy,r,deg){ const rad=(deg-90)*Math.PI/180; return [cx+r*Math.cos(rad), cy+r*Math.sin(rad)]; }
+  const [x1,y1] = polar(cx,cy,R,-120);
+  const [x2,y2] = polar(cx,cy,R,120);
+  const trackPath = `M ${x1} ${y1} A ${R} ${R} 0 1 1 ${x2} ${y2}`;
+  const [fx,fy] = polar(cx,cy,R,angle);
+  const fillPath = `M ${x1} ${y1} A ${R} ${R} 0 ${pct>0.5?1:0} 1 ${fx} ${fy}`;
+  const [nx,ny] = polar(cx,cy,R-18,angle);
+  const ticks = [0,1,2,3,4].map(i=>{
+    const deg = -120+(i/4)*240;
+    const [tx1,ty1]=polar(cx,cy,R+9,deg), [tx2,ty2]=polar(cx,cy,R+2,deg);
+    return `<line x1="${tx1}" y1="${ty1}" x2="${tx2}" y2="${ty2}" stroke="#CBD5E1" stroke-width="2"/>`;
+  }).join('');
+  return `
+  <svg width="${size}" height="${size-8}" viewBox="0 0 ${size} ${size-8}">
+    <path d="${trackPath}" fill="none" stroke="#E2E8F0" stroke-width="12" stroke-linecap="round"/>
+    <path d="${fillPath}" fill="none" stroke="${color}" stroke-width="12" stroke-linecap="round"/>
+    ${ticks}
+    <line x1="${cx}" y1="${cy}" x2="${nx}" y2="${ny}" stroke="${color}" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="${cx}" cy="${cy}" r="7" fill="${color}"/>
+    <text x="${cx}" y="${cy+R+34}" text-anchor="middle" class="mono" font-size="13" fill="#64748B">${value.toFixed(1)} / 4.0</text>
+  </svg>`;
+}
+
+function renderRadar(dimScores, weakIds){
+  const N = DIMENSIONS.length;
+  const size = 320, cx = size/2, cy = size/2, R = 110;
+  function polar(r, i){
+    const deg = -90 + (360/N)*i;
+    const rad = deg * Math.PI/180;
+    return [cx + r*Math.cos(rad), cy + r*Math.sin(rad)];
+  }
+  // grid rings at 1,2,3,4
+  const rings = [1,2,3,4].map(level => {
+    const r = R * (level/4);
+    const pts = DIMENSIONS.map((_,i) => polar(r,i).join(',')).join(' ');
+    return `<polygon points="${pts}" fill="none" stroke="#E2E8F0" stroke-width="1"/>`;
+  }).join('');
+  // axis lines
+  const axes = DIMENSIONS.map((_,i) => {
+    const [x,y] = polar(R,i);
+    return `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="#E2E8F0" stroke-width="1"/>`;
+  }).join('');
+  // data polygon
+  const dataPts = DIMENSIONS.map((d,i) => polar(R*(dimScores[d.id]/4), i));
+  const dataPath = dataPts.map(p=>p.join(',')).join(' ');
+  // labels + dots
+  const labels = DIMENSIONS.map((d,i) => {
+    const [lx,ly] = polar(R+34,i);
+    const isWeak = weakIds.includes(d.id);
+    const anchor = Math.abs(lx-cx) < 4 ? 'middle' : (lx > cx ? 'start' : 'end');
+    return `<text x="${lx}" y="${ly}" text-anchor="${anchor}" dominant-baseline="middle" font-size="12" font-family="Fira Sans, sans-serif" fill="${isWeak?'#EF4444':'#475569'}" font-weight="${isWeak?'700':'500'}">${d.short}</text>`;
+  }).join('');
+  const dots = DIMENSIONS.map((d,i) => {
+    const [x,y] = polar(R*(dimScores[d.id]/4), i);
+    const isWeak = weakIds.includes(d.id);
+    return `<circle cx="${x}" cy="${y}" r="4" fill="${isWeak?'#EF4444':'#3B82F6'}"/>`;
+  }).join('');
+
+  return `
+  <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    ${rings}
+    ${axes}
+    <polygon points="${dataPath}" fill="#3B82F6" fill-opacity="0.15" stroke="#3B82F6" stroke-width="2"/>
+    ${dots}
+    ${labels}
+  </svg>`;
+}
+
+function restart(){ answers = {}; currentQ = -1; render(); }
+render();
+</script>
+</body>
+</html>
